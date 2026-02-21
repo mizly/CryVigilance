@@ -2,20 +2,6 @@
 -- CryVigilance/index.lua  -  Lua port of the CryVigilance config library
 -- Renders a settings GUI via ImGui and persists values to a TOML file.
 -- =============================================================================
--- Confirmed API (from farming.lua / multiscript.lua in this mod):
---   imgui.inputText(label, currentValue)            -> (changed, newValue)
---   imgui.inputInt(label, value, step, fastStep)    -> (changed, newValue)
---   imgui.inputFloat(label, value, step, fast, fmt) -> (changed, newValue)
---   imgui.checkbox(label, value)                    -> (changed, newValue)
---   imgui.listBox(label, currentValue, options)     -> newValue  (no changed bool!)
---   imgui.selectable(label, selected)               -> clicked_bool
---   imgui.beginCombo / endCombo
---   imgui.beginTabBar / endTabBar / beginTabItem / endTabItem
---   imgui.collapsingHeader(label)                   -> open_bool
---   imgui.text / textColored / textDisabled / separator / spacing / sameLine
---   imgui.begin / endBegin
---   imgui.beginChild / endChild
---   imgui.setNextWindowSize(w, h, cond)
 local luajava_ok, File = pcall(function() return luajava.bindClass("java.io.File") end)
 
 local CryVigilance = {}
