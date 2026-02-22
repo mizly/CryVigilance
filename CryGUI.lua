@@ -5,6 +5,15 @@
 -- RCTRL to toggle GUI.
 -- =============================================================================
 
+local CryVigilance = require("CryVigilance/index")
+
+local cfg = CryVigilance.new(
+    "CryGUI",
+    "CryGUI - Script Manager",
+    "config/hypixelcry/scripts/config/CryGUI.toml",
+    345  -- RCTRL (GLFW_KEY_RIGHT_CONTROL)
+)
+
 local File = luajava.bindClass("java.io.File")
 local Files = luajava.bindClass("java.nio.file.Files")
 local Array = luajava.bindClass("java.lang.reflect.Array")
@@ -134,17 +143,6 @@ function files.deleteDirectoryRecursive(directoryPath)
     return deleteRecursively(dir)
 end
 
--- ── GUI Logic (Powered by CryVigilance) ─────────────────────────────────────
-
-local CryVigilance = require("CryVigilance/index")
-
-local cfg = CryVigilance.new(
-    "CryGUI",
-    "CryGUI - Script Manager",
-    "config/hypixelcry/scripts/config/CryGUI.toml",
-    345  -- RCTRL (GLFW_KEY_RIGHT_CONTROL)
-)
-
 -- Scan for scripts and register them as checkboxes
 local scriptsPath = "config/hypixelcry/scripts"
 local scriptsDir = luajava.newInstance("java.io.File", scriptsPath)
@@ -157,11 +155,11 @@ if scriptsDir:exists() and scriptsDir:isDirectory() then
             local file = Array:get(contents, i)
             local name = file:getName()
             
-            -- Add every .lua file except self and core components
+            local scriptId = name:gsub("%.lua$", "")
+            
+            -- Add every .lua file except self
             if not file:isDirectory() and name:match("%.lua$") 
-               and name ~= "CryGUI.lua" and name ~= "multiscript.lua" then
-                
-                local scriptId = name:gsub("%.lua$", "")
+               and scriptId ~= currentScriptName then
                 
                 cfg:addProperty({
                     type        = CryVigilance.TYPES.CHECKBOX,

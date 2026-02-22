@@ -2,6 +2,7 @@
 -- CryVigilance/index.lua  -  Lua port of the CryVigilance config library
 -- Renders a settings GUI via ImGui and persists values to a TOML file.
 -- =============================================================================
+
 local luajava_ok, File = pcall(function() return luajava.bindClass("java.io.File") end)
 
 local CryVigilance = {}
@@ -20,6 +21,9 @@ CryVigilance.TYPES = {
     COLOR          = "color",
     SELECTOR       = "selector",
     BUTTON         = "button",
+    V_SLIDER       = "v_slider",
+    ANGLE_SLIDER   = "angle_slider",
+    IMAGE          = "image",
 }
 
 -- ============================================================================
@@ -192,6 +196,9 @@ function CryVigilance:addProperty(p)
         elseif p.type == T.COLOR          then p.default = {255, 255, 255, 255}  -- {A,R,G,B}
         elseif p.type == T.SELECTOR       then p.default = 1
         elseif p.type == T.BUTTON         then p.default = nil
+        elseif p.type == T.V_SLIDER       then p.default = p.minF or p.min or 0
+        elseif p.type == T.ANGLE_SLIDER   then p.default = 0
+        elseif p.type == T.IMAGE          then p.default = nil
         end
     end
 
@@ -313,6 +320,18 @@ function CryVigilance:initialize()
     end)
 end
 
+--- Clean up resources (call this in your registerUnloadCallback).
+function CryVigilance:destroy()
+    if self._imageObjects then
+        for _, entry in pairs(self._imageObjects) do
+            if entry.handle then
+                pcall(function() entry.handle.release() end)
+            end
+        end
+        self._imageObjects = {}
+    end
+end
+
 -- ============================================================================
 -- Save
 -- ============================================================================
@@ -413,36 +432,68 @@ local function _renderProperty(self, prop)
         end
 
     -- ── SLIDER (integer) ──────────────────────────────────────────────────── 
-    -- Use inputInt as the confirmed integer input widget (sliderInt may not exist)
+    -- Now using the actual imgui.sliderInt method
     elseif prop.type == T.SLIDER then
         local cur = math.floor(val or prop.min)
-        local label = prop.name .. " [" .. prop.min .. "-" .. prop.max .. "]" .. "##sl_" .. key
-        local changed, newVal = imgui.inputInt(label, cur, prop.increment, prop.increment * 5)
+        local label = prop.name .. "##sl_" .. key
+        
+        local changed, newVal
+        if type(imgui.sliderInt) == "function" then
+            changed, newVal = imgui.sliderInt(label, cur, prop.min, prop.max)
+        else
+            -- Fallback to inputInt if sliderInt isn't available
+            changed, newVal = imgui.inputInt(label .. " [" .. prop.min .. "-" .. prop.max .. "]", cur, prop.increment, prop.increment * 5)
+        end
+        
         if changed then
             newVal = math.max(prop.min, math.min(prop.max, newVal))
             _setValue(self, key, newVal)
         end
 
     -- ── DECIMAL SLIDER ────────────────────────────────────────────────────── 
+    -- Now using the actual imgui.sliderFloat method
     elseif prop.type == T.DECIMAL_SLIDER then
         local cur = val or prop.minF
         local fmt = "%." .. prop.decimalPlaces .. "f"
-        local label = prop.name .. " [" .. string.format(fmt, prop.minF) .. "-" .. string.format(fmt, prop.maxF) .. "]##dsl_" .. key
-        local changed, newVal = imgui.inputFloat(label, cur, 0.1, 1.0, fmt)
+        local label = prop.name .. "##dsl_" .. key
+        
+        local changed, newVal
+        if type(imgui.sliderFloat) == "function" then
+            changed, newVal = imgui.sliderFloat(label, cur, prop.minF, prop.maxF)
+        else
+            -- Fallback to inputFloat
+            changed, newVal = imgui.inputFloat(label .. " [" .. string.format(fmt, prop.minF) .. "-" .. string.format(fmt, prop.maxF) .. "]", cur, 0.1, 1.0, fmt)
+        end
+        
         if changed then
             newVal = math.max(prop.minF, math.min(prop.maxF, newVal))
             _setValue(self, key, newVal)
         end
 
     -- ── PERCENT SLIDER ────────────────────────────────────────────────────── 
+    -- Now using sliderFloat for a better UI experience
     elseif prop.type == T.PERCENT_SLIDER then
         local cur = val or 0.0
-        -- display as 0-100, store as 0.0-1.0
-        local displayPct = cur * 100
-        local changed, newPct = imgui.inputFloat(prop.name .. " [0-100%%]##psl_" .. key, displayPct, 1.0, 10.0, "%.1f%%")
+        -- Stored as 0.0-1.0
+        local label = prop.name .. "##psl_" .. key
+        
+        local changed, newVal
+        if type(imgui.sliderFloat) == "function" then
+            -- Note: ImGui often allows a format string in sliderFloat, e.g. "%.0f%%"
+            -- We'll assume the basic (label, value, min, max) for now based on your list
+            changed, newVal = imgui.sliderFloat(label, cur, 0.0, 1.0)
+        else
+            -- Fallback: display as 0-100, store as 0.0-1.0
+            local displayPct = cur * 100
+            local chPct, newPct = imgui.inputFloat(prop.name .. " [0-100%%]##psl_" .. key, displayPct, 1.0, 10.0, "%.1f%%")
+            if chPct then
+                changed = true
+                newVal = math.max(0.0, math.min(100.0, newPct)) / 100.0
+            end
+        end
+        
         if changed then
-            local clamped = math.max(0.0, math.min(100.0, newPct))
-            _setValue(self, key, clamped / 100.0)
+            _setValue(self, key, newVal)
         end
 
     -- ── NUMBER ────────────────────────────────────────────────────────────── 
@@ -478,6 +529,107 @@ local function _renderProperty(self, prop)
         end
 
         if anyChanged then _setValue(self, key, newC) end
+
+    -- ── VERTICAL SLIDER ───────────────────────────────────────────────────── 
+    elseif prop.type == T.V_SLIDER then
+        local cur = val or prop.min or 0
+        local w = prop.width or 18
+        local h = prop.height or 100
+        
+        local changed, newVal
+        if type(cur) == "number" and cur % 1 == 0 then
+            -- Assume integer if current value is whole number
+            if type(imgui.vSliderInt) == "function" then
+                changed, newVal = imgui.vSliderInt(prop.name .. "##vsl_" .. key, w, h, cur, prop.min or 0, prop.max or 100)
+            end
+        else
+            if type(imgui.vSliderFloat) == "function" then
+                changed, newVal = imgui.vSliderFloat(prop.name .. "##vsl_" .. key, w, h, cur, prop.minF or 0.0, prop.maxF or 1.0)
+            end
+        end
+        
+        if changed then _setValue(self, key, newVal) end
+
+    -- ── ANGLE SLIDER ──────────────────────────────────────────────────────── 
+    elseif prop.type == T.ANGLE_SLIDER then
+        local cur = val or 0  -- radians
+        if type(imgui.sliderAngle) == "function" then
+            local changed, newVal = imgui.sliderAngle(prop.name .. "##ang_" .. key, cur, prop.minDeg or -360, prop.maxDeg or 360)
+            if changed then _setValue(self, key, newVal) end
+        else
+            -- fallback
+            local changed, newVal = imgui.inputFloat(prop.name .. " (rad)##ang_" .. key, cur, 0.1, 1.0, "%.3f")
+            if changed then _setValue(self, key, newVal) end
+        end
+
+    -- ── IMAGE ───────────────────────────────────────────────────────────────
+    elseif prop.type == T.IMAGE then
+        local path = val or prop.path or ""
+        
+        if path ~= "" then
+            -- Initialise image object cache on the instance
+            if not self._imageObjects then self._imageObjects = {} end
+            
+            local entry = self._imageObjects[key]
+            
+            -- If path changed or not loaded, create/reload
+            if not entry or entry.path ~= path then
+                if entry and entry.handle then
+                    pcall(function() entry.handle.release() end)
+                end
+                
+                -- Verify file existence safely
+                local exists = false
+                local fCheck = pcall(function()
+                    local f = luajava.newInstance("java.io.File", path)
+                    exists = f:exists() and f:isFile()
+                end)
+
+                if exists then
+                    local fObj = luajava.newInstance("java.io.File", path)
+                    local size = fObj:length()
+                    
+                    local success, newObj = pcall(imgui.createImageObject)
+                    if success and newObj then
+                        local ok, err = pcall(function() newObj.loadImage(path) end)
+                        if ok then
+                            self._imageObjects[key] = { handle = newObj, path = path }
+                            entry = self._imageObjects[key]
+                            if player and player.addMessage then 
+                                player.addMessage("§a[CryVigilance] Texture created! ID: " .. tostring(newObj.getId()))
+                                player.addMessage("§7Size: " .. tostring(size) .. " bytes") 
+                            end
+                        else
+                            imgui.textColored(255, 50, 50, 255, "Load Error: " .. tostring(err))
+                            if player and player.addMessage then player.addMessage("§c[CryVigilance] loadImage failed: " .. tostring(err)) end
+                        end
+                    else
+                        imgui.textColored(255, 50, 50, 255, "Image API Error")
+                        if player and player.addMessage then player.addMessage("§c[CryVigilance] createImageObject failed") end
+                    end
+                else
+                    imgui.textDisabled("[Image not found on disk]")
+                    if type(imgui.textDisabled) == "function" then
+                        imgui.textDisabled("  Path: " .. path)
+                    end
+                    if player and player.addMessage then player.addMessage("§e[CryVigilance] Image not found: " .. tostring(path)) end
+                end
+            end
+            
+            if entry and entry.handle then
+                local w = prop.width or 100
+                local h = prop.height or 100
+                -- Draw a small label above to confirm we are attempting to render
+                imgui.textDisabled("(Image: " .. key .. " " .. w .. "x" .. h .. ")")
+                
+                local drawOk, drawErr = pcall(imgui.image, entry.handle.getId(), w, h, 0, 0, 1, 1)
+                if not drawOk then
+                    imgui.textColored(255, 50, 50, 255, "Render Error: " .. tostring(drawErr))
+                end
+            end
+        else
+            imgui.textDisabled("[No image path set]")
+        end
 
     -- ── SELECTOR ──────────────────────────────────────────────────────────── 
     -- imgui.listBox confirmed signature (farming.lua):
@@ -530,73 +682,94 @@ end
 function CryVigilance:_render()
     if not self._open then return end
 
-    -- Find the first COLOR property and use it to tint the window title bar.
+    -- Find color settings for theme and text elements
     local themeR, themeG, themeB = nil, nil, nil
+    local textR, textG, textB, textA = nil, nil, nil, nil
+    
     for _, prop in ipairs(self._props) do
-        if prop.type == CryVigilance.TYPES.COLOR then
-            local c = self._values[prop.key] or {255, 255, 255, 255}  -- {A,R,G,B}
-            themeR = c[2] / 255
-            themeG = c[3] / 255
-            themeB = c[4] / 255
-            break
+        if prop.key == "hud_color" or prop.key == "theme_color" then
+            local c = self._values[prop.key] or {255, 255, 255, 255}
+            themeR, themeG, themeB = c[2]/255, c[3]/255, c[4]/255
+        elseif prop.key == "text_color" then
+            local c = self._values[prop.key] or {255, 255, 255, 255}
+            textA, textR, textG, textB = c[1]/255, c[2]/255, c[3]/255, c[4]/255
+        end
+    end
+    
+    -- Fallback theme search (find the first color property if specific ones aren't present)
+    if not themeR then
+        for _, prop in ipairs(self._props) do
+            if prop.type == CryVigilance.TYPES.COLOR then
+                local c = self._values[prop.key] or {255, 255, 255, 255}
+                themeR, themeG, themeB = c[2]/255, c[3]/255, c[4]/255
+                break
+            end
         end
     end
 
-    -- Push style colors to tint the window to match the chosen HUD colour.
-    -- ImGuiCol constants (standard Dear ImGui ordinals):
-    --   TitleBg=5, TitleBgActive=6, TitleBgCollapsed=7, Header=21
+    -- Push style colors to tint the window to match the chosen colour settings.
     local stylesPushed = 0
-    if themeR and type(imgui.pushStyleColor) == "function" then
+    if type(imgui.pushStyleColor) == "function" then
         local function push(col, r, g, b, a)
             local ok = pcall(imgui.pushStyleColor, col, r, g, b, a)
             if ok then stylesPushed = stylesPushed + 1 end
         end
-        push(6,  themeR,       themeG,       themeB,       1.0)  -- TitleBgActive
-        push(5,  themeR * 0.7, themeG * 0.7, themeB * 0.7, 1.0)  -- TitleBg
-        push(7,  themeR * 0.5, themeG * 0.5, themeB * 0.5, 0.9)  -- TitleBgCollapsed
-        push(21, themeR * 0.4, themeG * 0.4, themeB * 0.4, 0.6)  -- Header (category selected)
-        push(22, themeR * 0.6, themeG * 0.6, themeB * 0.6, 0.7)  -- HeaderHovered
+        
+        -- Window Elements (using theme color)
+        if themeR then
+            push(imgui.Col_TitleBgActive or 6,    themeR,       themeG,       themeB,       1.0)
+            push(imgui.Col_TitleBg or 5,          themeR * 0.7, themeG * 0.7, themeB * 0.7, 1.0)
+            push(imgui.Col_TitleBgCollapsed or 7, themeR * 0.5, themeG * 0.5, themeB * 0.5, 0.9)
+            push(imgui.Col_Header or 21,          themeR * 0.4, themeG * 0.4, themeB * 0.4, 0.6)
+            push(imgui.Col_HeaderHovered or 22,   themeR * 0.6, themeG * 0.6, themeB * 0.6, 0.7)
+        end
+        
+        -- Text Elements (using text color)
+        if textR then
+            push(imgui.Col_Text or 0, textR, textG, textB, textA or 1.0)
+        end
     end
 
     imgui.setNextWindowSize(560, 460, 2)   -- 2 = FirstUseEver
     if imgui.begin(self.guiTitle) then
+        local keyName = "RSHIFT"
+        if self.openKey == 345 then keyName = "RCTRL"
+        elseif self.openKey == 344 then keyName = "RSHIFT"
+        elseif self.openKey == 340 then keyName = "LSHIFT"
+        elseif self.openKey == 341 then keyName = "LCTRL"
+        end
+        imgui.text(keyName .. " to close   |   " .. self.guiTitle)
+        imgui.separator()
 
-        -- Safety wrapper for the internal render logic.
-        -- If this fails, we still call endBegin() to avoid crashing the game.
-        local status, err = pcall(function()
-            imgui.text("RSHIFT to close   |   " .. self.guiTitle)
-            imgui.separator()
+        -- auto-select first category
+        if not self._activeCategory and #self._categories > 0 then
+            self._activeCategory = self._categories[1]
+        end
 
-            -- auto-select first category
-            if not self._activeCategory and #self._categories > 0 then
-                self._activeCategory = self._categories[1]
-            end
-
-            -- Left panel: category list
-            imgui.beginChild("##cats", 130, 0, true)
+        -- Left panel: category list
+        local leftOk = pcall(imgui.beginChild, "##cats", 130, 0, true)
+        if leftOk then
             for _, cat in ipairs(self._categories) do
                 local sel = (self._activeCategory == cat)
                 if imgui.selectable(cat .. "##cat_" .. cat, sel) then
                     self._activeCategory = cat
                 end
             end
-
-            -- Reset button at bottom of sidebar
             imgui.spacing()
             imgui.separator()
             imgui.spacing()
             if imgui.button("Reset All##global_reset", -1) then
                 self:resetToDefaults()
             end
-
             imgui.endChild()
+        end
 
-            imgui.sameLine()
+        imgui.sameLine()
 
-            -- Right panel: properties
-            imgui.beginChild("##props", 0, 0, false)
+        -- Right panel: properties
+        local rightOk = pcall(imgui.beginChild, "##props", 0, 0, false)
+        if rightOk then
             local currentCat = self._activeCategory
-
             local subOrder = {}
             local subSeen  = {}
             for _, prop in ipairs(self._props) do
@@ -621,21 +794,18 @@ function CryVigilance:_render()
                 for _, prop in ipairs(self._props) do
                     if prop.category == currentCat and prop.subcategory == sub then
                         if _isVisible(self, prop) then
-                            -- Individual property render is also pcall-wrapped in _renderProperty
-                            _renderProperty(self, prop)
+                            -- Individual property render is pcall-wrapped in _renderProperty
+                            local status, err = pcall(_renderProperty, self, prop)
+                            if not status then
+                                imgui.textColored(255, 50, 50, 255, "Error: " .. tostring(err))
+                            end
                         end
                     end
                 end
                 if type(imgui.spacing) == "function" then imgui.spacing() end
             end
-
             imgui.endChild()
-        end)
-
-        if not status then
-            imgui.textColored(255, 50, 50, 255, "GUI Render Error: " .. tostring(err))
         end
-
         imgui.endBegin()
     end
 

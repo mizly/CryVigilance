@@ -4,6 +4,7 @@
 -- =============================================================================
 
 local CryVigilance = require("CryVigilance/index")
+local downloadFile = require("libs/downloadFile")
 
 -- ── Create a config instance ────────────────────────────────────────────────
 -- CryVigilance.new(moduleName, windowTitle, tomlPath, openKey)
@@ -133,6 +134,36 @@ cfg:addProperty({
     max         = 20,
 })
 
+-- ── VERTICAL SLIDER ──────────────────────────────────────────────────────────
+-- A slider oriented vertically. Useful for things like level meters.
+cfg:addProperty({
+    type        = CryVigilance.TYPES.V_SLIDER,
+    key         = "v_meter",
+    name        = "Vertical Meter",
+    description = "A vertical float slider.",
+    category    = "Timing",
+    subcategory = "Special",
+    default     = 0.5,
+    minF        = 0.0,
+    maxF        = 1.0,
+    width       = 30,
+    height      = 120,
+})
+
+-- ── ANGLE SLIDER ────────────────────────────────────────────────────────────
+-- Specifically designed for rotation/angles. Displays in degrees but stores in radians.
+cfg:addProperty({
+    type        = CryVigilance.TYPES.ANGLE_SLIDER,
+    key         = "rotation",
+    name        = "Rotation Angle",
+    description = "Angle adjustment (degrees in UI, radians in code).",
+    category    = "Timing",
+    subcategory = "Special",
+    default     = 0.0,
+    minDeg      = -180,
+    maxDeg      = 180,
+})
+
 -- ── COLOR ────────────────────────────────────────────────────────────────────
 -- RGBA colour picker (stored as { A, R, G, B } 0-255 integers).
 -- Set allowAlpha = false to hide the alpha channel.
@@ -149,13 +180,47 @@ cfg:addProperty({
 
 cfg:addProperty({
     type        = CryVigilance.TYPES.COLOR,
-    key         = "highlight_color",
-    name        = "Highlight Colour",
-    description = "No alpha channel exposed.",
+    key         = "text_color",
+    name        = "Text Colour",
+    description = "The colour used for text elements in the GUI.",
     category    = "Appearance",
     subcategory = "Colours",
-    default     = { 255, 255, 30, 30 },
-    allowAlpha  = false,
+    default     = { 255, 255, 255, 255 },   -- { A, R, G, B }
+    allowAlpha  = true,
+})
+
+-- ── File Download Helper ────────────────────────────────────────────────────
+local scriptsDir = "config/hypixelcry/scripts/"
+local imagePath  = scriptsDir .. "images/troll.png"
+local imageUrl   = "https://spaces-cdn.clipsafari.com/stz2jv3im7x7kvwqiyt6vsig0tlc"
+local imgFile = luajava.newInstance("java.io.File", imagePath)
+
+if not imgFile:exists() then
+    player.addMessage("§b[Example] Downloading preview image...")
+    downloadFile.download(imageUrl, imagePath, function(success, result)
+        if success then
+            player.addMessage("§a[Example] File ready: " .. result)
+            -- Trigger reload in the UI
+            cfg:set("preview_image", "")
+            cfg:set("preview_image", imagePath)
+        else
+            player.addMessage("§c[Example] Download error: " .. result)
+        end
+    end)
+end
+
+-- ── IMAGE ────────────────────────────────────────────────────────────────────
+-- Renders an image. We use a local path because imgui.image needs a loaded texture.
+cfg:addProperty({
+    type        = CryVigilance.TYPES.IMAGE,
+    key         = "preview_image",
+    name        = "Module Preview",
+    description = "A custom preview image downloaded on first run.",
+    category    = "Appearance",
+    subcategory = "Media",
+    path        = imagePath,
+    width       = 200,
+    height      = 200,
 })
 
 -- ── SELECTOR (dropdown / combo) ─────────────────────────────────────────────
@@ -181,10 +246,8 @@ cfg:addProperty({
     category    = "Appearance",
     subcategory = "Style",
     action      = function()
-        -- manually reset a couple of values as a demo
-        cfg:set("delay_ticks", 5)
-        cfg:set("volume", 0.75)
-        player.addMessage("§a[Example] Settings reset to defaults.")
+        cfg:resetToDefaults()
+        player.addMessage("§a[Example] All settings reset to defaults.")
     end,
 })
 
@@ -210,6 +273,11 @@ end)
 -- Must be called after all addProperty() / onChanged() / addDependency() calls.
 -- Loads saved values from TOML, registers ImGui + key event hooks.
 cfg:initialize()
+
+-- ── Cleanup ───────────────────────────────────────────────────────────────
+registerUnloadCallback(function()
+    cfg:destroy()
+end)
 
 -- ── Accessing values from other scripts ─────────────────────────────────────
 -- After initialize(), you can read values anywhere with cfg:get(key).
