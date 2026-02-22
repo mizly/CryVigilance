@@ -8,6 +8,9 @@ local luajava_ok, File = pcall(function() return luajava.bindClass("java.io.File
 local CryVigilance = {}
 CryVigilance.__index = CryVigilance
 
+-- ── Signal directory for cross-script communication ──────────────────────
+local SIGNAL_DIR = "config/hypixelcry/scripts/config/.crygui_signals/"
+
 -- ── Property type constants ────────────────────────────────────────────────── 
 CryVigilance.TYPES = {
     SWITCH         = "switch",
@@ -243,6 +246,25 @@ end
 function CryVigilance:get(key)   return self._values[key] end
 function CryVigilance:set(key, v) self._values[key] = v; self._dirty = true end
 
+--- Programmatically open this config GUI.
+function CryVigilance:open()   self._open = true  end
+--- Programmatically close this config GUI.
+function CryVigilance:close()  self._open = false end
+--- Toggle this config GUI open/closed.
+function CryVigilance:toggle() self._open = not self._open end
+
+--- Write a signal file to request opening a config GUI by moduleName.
+-- This is the cross-script communication mechanism: CryGUI writes a signal,
+-- the target CryVigilance instance picks it up on the next tick.
+function CryVigilance.requestOpen(moduleName)
+    _ensureDirectory(SIGNAL_DIR .. "dummy")
+    local f = io.open(SIGNAL_DIR .. moduleName .. ".open", "w")
+    if f then
+        f:write("open")
+        f:close()
+    end
+end
+
 -- ============================================================================
 -- Internal helpers
 -- ============================================================================
@@ -289,6 +311,15 @@ end
 
 function CryVigilance:initialize()
     _ensureDirectory(self.configPath)
+
+    -- Write a registry file so CryGUI can discover this module
+    _ensureDirectory(SIGNAL_DIR .. "dummy")
+    local regFile = io.open(SIGNAL_DIR .. self.moduleName .. ".registered", "w")
+    if regFile then
+        regFile:write(self.moduleName)
+        regFile:close()
+    end
+
     local saved = loadToml(self.configPath, self._props)
 
     for _, prop in ipairs(self._props) do
@@ -317,11 +348,25 @@ function CryVigilance:initialize()
             self_ref:save()
             self_ref._dirty = false
         end
+
+        -- Check for an open signal from CryGUI
+        local signalPath = SIGNAL_DIR .. self_ref.moduleName .. ".open"
+        local sf = io.open(signalPath, "r")
+        if sf then
+            sf:close()
+            -- Delete the signal file and open the GUI
+            os.remove(signalPath)
+            self_ref._open = true
+        end
     end)
 end
 
 --- Clean up resources (call this in your registerUnloadCallback).
 function CryVigilance:destroy()
+    -- Remove registry and signal files
+    pcall(os.remove, SIGNAL_DIR .. self.moduleName .. ".registered")
+    pcall(os.remove, SIGNAL_DIR .. self.moduleName .. ".open")
+
     if self._imageObjects then
         for _, entry in pairs(self._imageObjects) do
             if entry.handle then
@@ -667,6 +712,19 @@ local function _renderProperty(self, prop)
         end
     end
 
+    -- Inline button: render a small button on the same line after the widget
+    if prop.inlineButton then
+        imgui.sameLine()
+        if imgui.button(prop.inlineButton.name .. "##ib_" .. key) then
+            if prop.inlineButton.action then
+                local ok, err = pcall(prop.inlineButton.action)
+                if not ok then
+                    print("[CryVigilance] inline button error '" .. key .. "': " .. tostring(err))
+                end
+            end
+        end
+    end
+
     -- Description shown as a dimmed line beneath the widget
     if prop.description and prop.description ~= "" then
         if type(imgui.textDisabled) == "function" then
@@ -738,7 +796,27 @@ function CryVigilance:_render()
         elseif self.openKey == 340 then keyName = "LSHIFT"
         elseif self.openKey == 341 then keyName = "LCTRL"
         end
+
+        -- Align text vertically with the button we are about to draw
+        if type(imgui.alignTextToFramePadding) == "function" then
+            imgui.alignTextToFramePadding()
+        end
+        
         imgui.text(keyName .. " to close   |   " .. self.guiTitle)
+        
+        -- Right align the close button
+        if type(imgui.getWindowWidth) == "function" then
+            local windowWidth = imgui.getWindowWidth()
+            local buttonWidth = 40 -- Estimated width for "Close"
+            local padding = 15
+            imgui.sameLine(windowWidth - buttonWidth - padding)
+        else
+            imgui.sameLine()
+        end
+
+        if imgui.button("Close##cv_close") then
+            self._open = false
+        end
         imgui.separator()
 
         -- auto-select first category
@@ -806,8 +884,8 @@ function CryVigilance:_render()
             end
             imgui.endChild()
         end
-        imgui.endBegin()
     end
+    imgui.endBegin()
 
     -- Pop any style colors we pushed
     if stylesPushed > 0 and type(imgui.popStyleColor) == "function" then
