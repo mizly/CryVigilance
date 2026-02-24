@@ -1,5 +1,5 @@
 -- =============================================================================
--- CryVigilance example.lua  –  shows every supported input type
+-- CryVigilance VigilanceExample.lua  –  shows every supported input type
 -- Open/close the GUI with RSHIFT (configurable via the 4th arg to CryVigilance.new)
 -- =============================================================================
 
@@ -49,7 +49,7 @@ cfg:addProperty({
     description = "Text displayed on login.",
     category    = "General",
     subcategory = "Messages",
-    default     = "Hello, world!",
+    default     = "Hello, world! Use /examplemodule to open the GUI.",
     placeholder = "Enter message...",
     -- triggerActionOnInitialization = false  -- uncomment to skip listener on load
 })
@@ -192,7 +192,7 @@ cfg:addProperty({
 -- ── File Download Helper ────────────────────────────────────────────────────
 local scriptsDir = "config/hypixelcry/scripts/"
 local imagePath  = scriptsDir .. "images/troll.png"
-local imageUrl   = "https://spaces-cdn.clipsafari.com/stz2jv3im7x7kvwqiyt6vsig0tlc"
+local imageUrl   = "https://upload.wikimedia.org/wikipedia/en/7/73/Trollface.png"
 local imgFile = luajava.newInstance("java.io.File", imagePath)
 
 if not imgFile:exists() then
@@ -221,6 +221,22 @@ cfg:addProperty({
     path        = imagePath,
     width       = 200,
     height      = 200,
+})
+
+-- ── VIDEO ────────────────────────────────────────────────────────────────────
+-- Renders an animation from a directory of images.
+cfg:addProperty({
+    type        = CryVigilance.TYPES.VIDEO,
+    key         = "bakushin_anim",
+    name        = "Bakushin Animation",
+    description = "A sequence of images played as an animation.",
+    category    = "Appearance",
+    subcategory = "Media",
+    path        = scriptsDir .. "images/bakushin",
+    width       = 200,
+    height      = 200,
+    fps         = 30,
+    loop        = true,
 })
 
 -- ── SELECTOR (dropdown / combo) ─────────────────────────────────────────────
@@ -279,13 +295,4 @@ registerUnloadCallback(function()
     cfg:destroy()
 end)
 
--- ── Accessing values from other scripts ─────────────────────────────────────
--- After initialize(), you can read values anywhere with cfg:get(key).
--- Example (in another script that requires this file):
---
---   local Settings = require("CryVigilance/example")
---   if Settings:get("enabled") then
---       -- module is toggled on
---   end
---   local color = Settings:get("hud_color")  -- { A, R, G, B } table
 return cfg

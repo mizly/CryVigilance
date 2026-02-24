@@ -147,6 +147,47 @@ end
 local scriptsPath = "config/hypixelcry/scripts"
 local scriptsDir = luajava.newInstance("java.io.File", scriptsPath)
 
+-- Helper: check if a script file contains a CryVigilance require
+local function scriptUsesCryVigilance(filePath)
+    local f = io.open(filePath, "r")
+    if not f then return false end
+    local content = f:read("*a")
+    f:close()
+    return content and content:find('require%s*%(%s*"CryVigilance/index"%s*%)') ~= nil
+end
+
+-- Helper: open the CryVigilance config for a given script ID via file signal
+local signalDir = "config/hypixelcry/scripts/config/.crygui_signals/"
+
+local function openVigilanceConfig(scriptId)
+    -- Scan the signal directory for .registered files to find the matching module
+    local dir = luajava.newInstance("java.io.File", signalDir)
+    if dir:exists() and dir:isDirectory() then
+        local filesArray = dir:listFiles()
+        if filesArray then
+            local len = Array:getLength(filesArray)
+            for i = 0, len - 1 do
+                local file = Array:get(filesArray, i)
+                local fname = file:getName()
+                if fname:match("%.registered$") then
+                    local modName = fname:gsub("%.registered$", "")
+                    local modLower = modName:lower()
+                    local idLower  = scriptId:lower()
+                    if modLower == idLower 
+                       or modLower:find(idLower, 1, true) 
+                       or idLower:find(modLower, 1, true) then
+                        -- Write the open signal
+                        CryVigilance.requestOpen(modName)
+                        player.addMessage("§a[CryGUI] Opening config for: " .. modName)
+                        return
+                    end
+                end
+            end
+        end
+    end
+    player.addMessage("§c[CryGUI] No active config found for '" .. scriptId .. "'. Make sure the script is loaded first!")
+end
+
 if scriptsDir:exists() and scriptsDir:isDirectory() then
     local contents = scriptsDir:listFiles()
     if contents then
@@ -161,14 +202,30 @@ if scriptsDir:exists() and scriptsDir:isDirectory() then
             if not file:isDirectory() and name:match("%.lua$") 
                and scriptId ~= currentScriptName then
                 
-                cfg:addProperty({
+                -- Check if the script file uses CryVigilance
+                local fullPath = scriptsPath .. "/" .. name
+                local hasVigilance = scriptUsesCryVigilance(fullPath)
+                
+                local propDef = {
                     type        = CryVigilance.TYPES.CHECKBOX,
                     key         = "run_" .. scriptId,
                     name        = name,
                     description = "Toggle loading of " .. name,
                     category    = "Scripts",
                     default     = false
-                })
+                }
+                
+                -- If script uses CryVigilance, add an inline configure button
+                if hasVigilance then
+                    propDef.inlineButton = {
+                        name   = "Configure",
+                        action = (function(id)
+                            return function() openVigilanceConfig(id) end
+                        end)(scriptId)
+                    }
+                end
+                
+                cfg:addProperty(propDef)
                 
                 -- When checked, send the load/unload command
                 cfg:onChanged("run_" .. scriptId, function(enabled)

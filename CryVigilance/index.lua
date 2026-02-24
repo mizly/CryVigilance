@@ -27,7 +27,33 @@ CryVigilance.TYPES = {
     V_SLIDER       = "v_slider",
     ANGLE_SLIDER   = "angle_slider",
     IMAGE          = "image",
+    VIDEO          = "video",
+    KEYBIND        = "keybind",
 }
+
+local GLFW_KEYS = {
+    [32] = "SPACE", [39] = "APOSTROPHE", [44] = "COMMA", [45] = "MINUS", [46] = "PERIOD", [47] = "SLASH",
+    [48] = "0", [49] = "1", [50] = "2", [51] = "3", [52] = "4", [53] = "5", [54] = "6", [55] = "7", [56] = "8", [57] = "9",
+    [59] = "SEMICOLON", [61] = "EQUAL", [65] = "A", [66] = "B", [67] = "C", [68] = "D", [69] = "E", [70] = "F", [71] = "G",
+    [72] = "H", [73] = "I", [74] = "J", [75] = "K", [76] = "L", [77] = "M", [78] = "N", [79] = "O", [80] = "P", [81] = "Q",
+    [82] = "R", [83] = "S", [84] = "T", [85] = "U", [86] = "V", [87] = "W", [88] = "X", [89] = "Y", [90] = "Z",
+    [91] = "LEFT_BRACKET", [92] = "BACKSLASH", [93] = "RIGHT_BRACKET", [96] = "GRAVE_ACCENT",
+    [256] = "ESCAPE", [257] = "ENTER", [258] = "TAB", [259] = "BACKSPACE", [260] = "INSERT", [261] = "DELETE",
+    [262] = "RIGHT", [263] = "LEFT", [264] = "DOWN", [265] = "UP", [266] = "PAGE_UP", [267] = "PAGE_DOWN",
+    [268] = "HOME", [269] = "END", [280] = "CAPS_LOCK", [281] = "SCROLL_LOCK", [282] = "NUM_LOCK",
+    [283] = "PRINT_SCREEN", [284] = "PAUSE", [290] = "F1", [291] = "F2", [292] = "F3", [293] = "F4",
+    [294] = "F5", [295] = "F6", [296] = "F7", [297] = "F8", [298] = "F9", [299] = "F10", [300] = "F11", [301] = "F12",
+    [320] = "KP_0", [321] = "KP_1", [322] = "KP_2", [323] = "KP_3", [324] = "KP_4", [325] = "KP_5",
+    [326] = "KP_6", [327] = "KP_7", [328] = "KP_8", [329] = "KP_9", [330] = "KP_DECIMAL", [331] = "KP_DIVIDE",
+    [332] = "KP_MULTIPLY", [333] = "KP_SUBTRACT", [334] = "KP_ADD", [335] = "KP_ENTER", [336] = "KP_EQUAL",
+    [340] = "LEFT_SHIFT", [341] = "LEFT_CONTROL", [342] = "LEFT_ALT", [343] = "LEFT_SUPER",
+    [344] = "RIGHT_SHIFT", [345] = "RIGHT_CONTROL", [346] = "RIGHT_ALT", [347] = "RIGHT_SUPER", [348] = "MENU"
+}
+
+local function getGlfwKeyName(code)
+    if not code then return "NONE" end
+    return GLFW_KEYS[code] or ("KEY_" .. tostring(code))
+end
 
 -- ============================================================================
 -- TOML helpers
@@ -44,7 +70,7 @@ local function toTomlValue(v, propType)
         end
         return tostring(math.floor(v + 0.5))
     elseif type(v) == "string" then
-        local escaped = v:gsub("\\", "\\\\"):gsub('"', '\\"')
+        local escaped = v:gsub("\\", "\\\\"):gsub('"', '\\"'):gsub("\n", "\\n"):gsub("\r", "\\r")
         return '"' .. escaped .. '"'
     end
     return '"' .. tostring(v) .. '"'
@@ -63,7 +89,7 @@ local function fromTomlValue(s, propType)
         return false
     elseif s:match('^"(.*)"$') then
         local inner = s:match('^"(.*)"$')
-        inner = inner:gsub('\\"', '"'):gsub("\\\\", "\\")
+        inner = inner:gsub("\\(.)", { n = "\n", r = "\r", ["\\"] = "\\", ['"'] = '"' })
         return inner
     elseif s:match("^%-?%d+%.%d+$") then
         return tonumber(s)
@@ -82,8 +108,10 @@ local function saveToml(path, data)
             table.insert(lines, "")
             table.insert(lines, "\t[" .. cat .. "." .. sub .. "]")
             for k, entry in pairs(keys) do
-                local val = toTomlValue(entry.value, entry.propType)
-                table.insert(lines, "\t\t" .. k .. " = " .. val)
+                if entry.value ~= nil then
+                    local val = toTomlValue(entry.value, entry.propType)
+                    table.insert(lines, "\t\t" .. k .. " = " .. val)
+                end
             end
         end
     end
@@ -202,6 +230,7 @@ function CryVigilance:addProperty(p)
         elseif p.type == T.V_SLIDER       then p.default = p.minF or p.min or 0
         elseif p.type == T.ANGLE_SLIDER   then p.default = 0
         elseif p.type == T.IMAGE          then p.default = nil
+        elseif p.type == T.VIDEO          then p.default = nil
         end
     end
 
@@ -310,6 +339,32 @@ end
 -- ============================================================================
 
 function CryVigilance:initialize()
+    local hasKeyProp = false
+    for _, p in ipairs(self._props) do
+        if p.key == "_vigilance_open_key" then hasKeyProp = true; break end
+    end
+    
+    if not hasKeyProp then
+        self:addProperty({
+            type        = CryVigilance.TYPES.KEYBIND,
+            key         = "_vigilance_open_key",
+            name        = "GUI Open Key",
+            description = "Click to set the keycode to toggle this GUI.",
+            category    = "ClickGUI",
+            subcategory = "Controls",
+            default     = self.openKey
+        })
+        self:addProperty({
+            type        = CryVigilance.TYPES.TEXT,
+            key         = "_vigilance_command",
+            name        = "GUI Open Command",
+            description = "Command string to open this GUI.",
+            category    = "ClickGUI",
+            subcategory = "Controls",
+            default     = self.moduleName:lower():gsub("%s+", "")
+        })
+    end
+
     _ensureDirectory(self.configPath)
 
     -- Write a registry file so CryGUI can discover this module
@@ -333,9 +388,45 @@ function CryVigilance:initialize()
 
     local self_ref = self
 
+    local function setupCommand(cmdStr)
+        if self_ref._registeredCommandText then
+            pcall(function() unregisterCommand(self_ref._registeredCommandText) end)
+            self_ref._registeredCommandText = nil
+        end
+        
+        if cmdStr and cmdStr ~= "" then
+            pcall(function()
+                registerCommand(cmdStr, function(commandName, args, sender)
+                    self_ref._open = not self_ref._open
+                end, function() return {} end)
+                self_ref._registeredCommandText = cmdStr
+            end)
+        end
+    end
+
+    setupCommand(self_ref:get("_vigilance_command"))
+    self_ref:onChanged("_vigilance_command", function(newCmd)
+        setupCommand(newCmd)
+    end)
+
     registerKeyEvent(function(key, action)
-        if key == self_ref.openKey and action == "Press" then
-            self_ref._open = not self_ref._open
+        if action == "Press" then
+            if self_ref._bindingKeyFor then
+                if key == 256 then -- Escape cancels the current bind attempt
+                    self_ref._bindingKeyFor = nil
+                    return
+                end
+                
+                self_ref._values[self_ref._bindingKeyFor] = key
+                self_ref._dirty = true
+                _fireListener(self_ref, self_ref._bindingKeyFor, key)
+                self_ref._bindingKeyFor = nil
+                return
+            end
+
+            if key == self_ref:get("_vigilance_open_key") then
+                self_ref._open = not self_ref._open
+            end
         end
     end)
 
@@ -363,6 +454,11 @@ end
 
 --- Clean up resources (call this in your registerUnloadCallback).
 function CryVigilance:destroy()
+    if self._registeredCommandText then
+        pcall(function() unregisterCommand(self._registeredCommandText) end)
+        self._registeredCommandText = nil
+    end
+
     -- Remove registry and signal files
     pcall(os.remove, SIGNAL_DIR .. self.moduleName .. ".registered")
     pcall(os.remove, SIGNAL_DIR .. self.moduleName .. ".open")
@@ -374,6 +470,19 @@ function CryVigilance:destroy()
             end
         end
         self._imageObjects = {}
+    end
+
+    if self._videoStates then
+        for _, state in pairs(self._videoStates) do
+            if state.frames then
+                for _, frame in ipairs(state.frames) do
+                    if frame.handle then
+                        pcall(function() frame.handle.release() end)
+                    end
+                end
+            end
+        end
+        self._videoStates = {}
     end
 end
 
@@ -409,6 +518,15 @@ local function _renderProperty(self, prop)
     local key = prop.key
     local val = self._values[key]
     local T   = CryVigilance.TYPES
+    
+    local customWidth = prop.width
+    local wrapId = "##wrap_" .. key
+    local needsEnd = false
+    if customWidth and type(imgui.beginChild) == "function" then
+        if imgui.beginChild(wrapId, customWidth, 35, false) then
+            needsEnd = true
+        end
+    end
 
     -- ── SWITCH ────────────────────────────────────────────────────────────── 
     if prop.type == T.SWITCH then
@@ -609,7 +727,10 @@ local function _renderProperty(self, prop)
 
     -- ── IMAGE ───────────────────────────────────────────────────────────────
     elseif prop.type == T.IMAGE then
-        local path = val or prop.path or ""
+        local path = val
+        if type(path) ~= "string" or path == "nil" or path == "" then
+            path = prop.path or ""
+        end
         
         if path ~= "" then
             -- Initialise image object cache on the instance
@@ -676,6 +797,113 @@ local function _renderProperty(self, prop)
             imgui.textDisabled("[No image path set]")
         end
 
+    -- ── VIDEO ───────────────────────────────────────────────────────────────
+    elseif prop.type == T.VIDEO then
+        local dirPath = val
+        if type(dirPath) ~= "string" or dirPath == "nil" or dirPath == "" then
+            dirPath = prop.path or ""
+        end
+        
+        if dirPath ~= "" then
+            -- Initialise video state cache on the instance
+            if not self._videoStates then self._videoStates = {} end
+            local state = self._videoStates[key]
+            
+            -- If path changed or not loaded, scan directory for frames
+            if not state or state.path ~= dirPath then
+                if state and state.frames then
+                    for _, frame in ipairs(state.frames) do
+                        if frame.handle then pcall(function() frame.handle.release() end) end
+                    end
+                end
+                
+                state = {
+                    path = dirPath,
+                    frames = {},
+                    currentIdx = 1,
+                    lastUpdate = os.clock(),
+                    fps = prop.fps or 20,
+                    loop = (prop.loop ~= false)
+                }
+                self._videoStates[key] = state
+                
+                local exists = false
+                local isDir = false
+                local absPath = "unknown"
+                pcall(function()
+                    local f = luajava.newInstance("java.io.File", dirPath)
+                    exists = f:exists()
+                    isDir = f:isDirectory()
+                    absPath = f:getAbsolutePath()
+                end)
+                
+                if exists and isDir then
+                    local fObj = luajava.newInstance("java.io.File", dirPath)
+                    local filesArr = fObj:listFiles()
+                    if filesArr then
+                        local tempFiles = {}
+                        for i = 0, filesArr.length - 1 do
+                            local file = filesArr[i]
+                            if file then
+                                local name = file:getName():lower()
+                                if file:isFile() and (name:match("%.png$") or name:match("%.jpe?g$")) then
+                                    table.insert(tempFiles, { name = file:getName(), path = file:getAbsolutePath() })
+                                end
+                            end
+                        end
+                        -- Sort frames by filename
+                        table.sort(tempFiles, function(a, b) return a.name < b.name end)
+                        
+                        for _, fInfo in ipairs(tempFiles) do
+                            local success, newObj = pcall(imgui.createImageObject)
+                            if success and newObj then
+                                local ok, err = pcall(function() newObj.loadImage(fInfo.path) end)
+                                if ok then
+                                    table.insert(state.frames, { handle = newObj, path = fInfo.path })
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            
+            if state and state.frames and #state.frames > 0 then
+                -- Update animation timing
+                local now = os.clock()
+                local delay = 1.0 / state.fps
+                if now - state.lastUpdate >= delay then
+                    state.currentIdx = state.currentIdx + 1
+                    if state.currentIdx > #state.frames then
+                        if state.loop then
+                            state.currentIdx = 1
+                        else
+                            state.currentIdx = #state.frames
+                        end
+                    end
+                    state.lastUpdate = now
+                end
+                
+                local frame = state.frames[state.currentIdx]
+                if frame and frame.handle then
+                    local w = prop.width or 100
+                    local h = prop.height or 100
+                    imgui.textDisabled("(Video: " .. key .. " frame " .. state.currentIdx .. "/" .. #state.frames .. ")")
+                    
+                    local drawOk, drawErr = pcall(imgui.image, frame.handle.getId(), w, h, 0, 0, 1, 1)
+                    if not drawOk then
+                        imgui.textColored(255, 50, 50, 255, "Render Error: " .. tostring(drawErr))
+                    end
+                end
+            else
+                imgui.textDisabled("[No frames found in directory]")
+                if type(imgui.textDisabled) == "function" then
+                    imgui.textDisabled("  Path: " .. dirPath)
+                end
+            end
+        else
+            imgui.textDisabled("[No directory path set for video]")
+        end
+
     -- ── SELECTOR ──────────────────────────────────────────────────────────── 
     -- imgui.listBox confirmed signature (farming.lua):
     --   listBox(label, currentValue, options) -> newValue
@@ -710,6 +938,22 @@ local function _renderProperty(self, prop)
                 end
             end
         end
+
+    -- ── KEYBIND ───────────────────────────────────────────────────────────── 
+    elseif prop.type == T.KEYBIND then
+        imgui.text(prop.name .. ": ")
+        imgui.sameLine()
+        
+        if self._bindingKeyFor == key then
+            if imgui.button("[Press any key...]##kb_" .. key) then
+                self._bindingKeyFor = nil
+            end
+        else
+            local keyName = getGlfwKeyName(val)
+            if imgui.button("[" .. keyName .. "]##kb_" .. key) then
+                self._bindingKeyFor = key
+            end
+        end
     end
 
     -- Inline button: render a small button on the same line after the widget
@@ -730,6 +974,10 @@ local function _renderProperty(self, prop)
         if type(imgui.textDisabled) == "function" then
             imgui.textDisabled("  " .. prop.description)
         end
+    end
+
+    if needsEnd then
+        imgui.endChild()
     end
 end
 
@@ -790,19 +1038,15 @@ function CryVigilance:_render()
 
     imgui.setNextWindowSize(560, 460, 2)   -- 2 = FirstUseEver
     if imgui.begin(self.guiTitle) then
-        local keyName = "RSHIFT"
-        if self.openKey == 345 then keyName = "RCTRL"
-        elseif self.openKey == 344 then keyName = "RSHIFT"
-        elseif self.openKey == 340 then keyName = "LSHIFT"
-        elseif self.openKey == 341 then keyName = "LCTRL"
-        end
+        local boundKey = self._values["_vigilance_open_key"] or self.openKey
+        local keyName = getGlfwKeyName(boundKey)
 
         -- Align text vertically with the button we are about to draw
         if type(imgui.alignTextToFramePadding) == "function" then
             imgui.alignTextToFramePadding()
         end
         
-        imgui.text(keyName .. " to close   |   " .. self.guiTitle)
+        imgui.text("[" .. keyName .. "] to close   |   " .. self.guiTitle)
         
         -- Right align the close button
         if type(imgui.getWindowWidth) == "function" then
