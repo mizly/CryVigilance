@@ -1,3 +1,6 @@
+-- @version 1.0
+-- @location /CryVigilance/
+
 -- =============================================================================
 -- CryVigilance/index.lua  -  Lua port of the CryVigilance config library
 -- Renders a settings GUI via ImGui and persists values to a TOML file.
@@ -1103,28 +1106,32 @@ function CryVigilance:_render()
                     end
                 end
             end
-
-            for _, sub in ipairs(subOrder) do
-                if sub ~= "" then
-                    if type(imgui.textDisabled) == "function" then
-                        imgui.textDisabled("-- " .. sub .. " --")
-                    else
-                        imgui.text("-- " .. sub .. " --")
-                    end
-                    imgui.separator()
-                end
-                for _, prop in ipairs(self._props) do
-                    if prop.category == currentCat and prop.subcategory == sub then
-                        if _isVisible(self, prop) then
-                            -- Individual property render is pcall-wrapped in _renderProperty
-                            local status, err = pcall(_renderProperty, self, prop)
-                            if not status then
-                                imgui.textColored(255, 50, 50, 255, "Error: " .. tostring(err))
+            if imgui.beginTabBar("##propsTab") then
+                for _, sub in ipairs(subOrder) do
+                    if imgui.beginTabItem(sub) then
+                        if sub ~= "" then
+                            if type(imgui.textDisabled) == "function" then
+                                imgui.textDisabled("-- " .. sub .. " --")
+                            else
+                                imgui.text("-- " .. sub .. " --")
+                            end
+                            imgui.separator()
+                        end
+                        for _, prop in ipairs(self._props) do
+                            if prop.category == currentCat and prop.subcategory == sub then
+                                if _isVisible(self, prop) then
+                                    -- Individual property render is pcall-wrapped in _renderProperty
+                                    local status, err = pcall(_renderProperty, self, prop)
+                                    if not status then
+                                        imgui.textColored(255, 50, 50, 255, "Error: " .. tostring(err))
+                                    end
+                                end
                             end
                         end
+                        imgui.endTabItem()
                     end
                 end
-                if type(imgui.spacing) == "function" then imgui.spacing() end
+                imgui.endTabBar()
             end
             imgui.endChild()
         end
